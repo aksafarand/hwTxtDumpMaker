@@ -340,8 +340,6 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 	var wg sync.WaitGroup
 	wg.Add(len(t))
 
-	// For Region And National is Not Split
-
 	for k, v := range t {
 		if err := os.MkdirAll(filepath.Join("result", currentDate, techName, k, "_dumpresult"), 0666); err != nil {
 			panic(err)
