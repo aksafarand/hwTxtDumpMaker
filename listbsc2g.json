@@ -1,0 +1,22 @@
+[
+  {
+    "ftpname": "BSC_Kudus",
+    "servername": "10.7.253.17:21",
+    "remotefolder": "/bam/version_b/ftp/export_cfgmml/",
+    "remoteuser": "hw_sudi",
+    "remotepass": "Huaweih3i2021?",
+    "fileprefix": "CFGMML-BSC0-",
+    "region": "Central Java",
+    "part": "0"
+  },
+  {
+    "ftpname": "BSC_Kudus_2",
+    "servername": "10.66.2.177:21",
+    "remotefolder": "/bam/version_a/ftp/export_cfgmml/",
+    "remoteuser": "hw_sudi",
+    "remotepass": "Huaweih3i2021?",
+    "fileprefix": "CFGMML-BSC0-",
+    "region": "Central Java",
+    "part": "0"
+  }  
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "ftpname": "Huawei_Kudus",
+    "servername": "10.7.245.34:21",
+    "remotefolder": "/bam/version_b/ftp/export_cfgmml/",
+    "remoteuser": "hw_sudi",
+    "remotepass": "Huaweih3i2021?",
+    "fileprefix": "CFGMML-RNC1198-",
+    "Region": "Central Java",
+    "Part": "1"
+  }
+]
