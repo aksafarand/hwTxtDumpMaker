@@ -32,6 +32,46 @@ import (
 
 var downloadFailed int
 
+func copyNationalResultToFolder(src, dest, techName string) ([]string, error) {
+	var resultCopy []string
+	_, err := os.Stat(dest)
+	if os.IsNotExist(err) {
+		if err := os.MkdirAll(dest, 0666); err != nil {
+			return nil, err
+		}
+	}
+
+	files := find(src, ".zip")
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		// copy and rename National Dump
+		if strings.Contains(filepath.Base(file), "National") && strings.Contains(file, techName) {
+			srcFile, err := os.Open(file)
+			if err != nil {
+				return nil, err
+			}
+			defer srcFile.Close()
+
+			newFileName := strings.Replace(filepath.Base(file), techName+"_DUMP_HW", "HW_"+techName, -1)
+			newFile, err := os.Create(filepath.Join(dest, newFileName))
+			if err != nil {
+				return nil, err
+			}
+			defer newFile.Close()
+			bytesCopied, err := io.Copy(newFile, srcFile)
+			if err != nil {
+				return nil, err
+			}
+			resultCopy = append(resultCopy, fmt.Sprintf("Copied %d bytes to %s", bytesCopied, newFile.Name()))
+		}
+
+	}
+
+	return resultCopy, nil
+}
+
 func ftpDownload(remoteServer, remoteFolder, remoteUser, remotePass, currentDate, serverName, filePrefix string, wg *sync.WaitGroup, region, national, dateNaming string) {
 	defer wg.Done()
 	var err error
@@ -170,7 +210,7 @@ func AppInfo() string {
 	return "Huawei Dump 2G/3G Maker - Kukuh Wikartomo - 2021 | kukuh.wikartomo@huawei.com"
 }
 
-func dataProcess(techName string, currentDate string, info chan string, skipDoubleSlash, rawOnly, keepCsv bool) {
+func dataProcess(techName string, currentDate string, info chan string, skipDoubleSlash, rawOnly, keepCsv bool) string {
 
 	var jsonFile string
 	var fileName string
@@ -225,7 +265,7 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 	log.Info(logInfo)
 
 	if rawOnly {
-		return
+		return ""
 	}
 
 	nationalMapPart := make(map[string][]string)
@@ -270,7 +310,7 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 		accessTemplate, err = ioutil.ReadFile(`./EMPTY.accdb`)
 		if err != nil {
 			log.Println(err)
-			return
+			return ""
 		}
 
 	}
@@ -285,7 +325,7 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 			err := ioutil.WriteFile(filepath.Join(parentDir, "result", currentDate, techName, accFolder, (techName+"_HW_"+accFolder+"_"+currentDate+".accdb")), accessTemplate, 0755)
 			if err != nil {
 				log.Error("Error creating", filepath.Join(parentDir, "result", currentDate, techName, accFolder, (techName+"_HW_"+accFolder+"_"+currentDate+".accdb")))
-				return
+				return ""
 			}
 		}
 	}
@@ -294,7 +334,7 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 		err := ioutil.WriteFile(filepath.Join(parentDir, "result", currentDate, techName, "National", (techName+"_DUMP_HW_"+"National"+"_"+currentDate+".accdb")), accessTemplate, 0755)
 		if err != nil {
 			log.Error("Error creating", filepath.Join(parentDir, "result", currentDate, techName, "National", (techName+"_DUMP_HW_"+"National"+"_"+currentDate+".accdb")))
-			return
+			return ""
 		}
 	}
 
@@ -302,7 +342,7 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 		err := ioutil.WriteFile(filepath.Join(parentDir, "result", currentDate, techName, "National", (techName+"_DUMP_HW_"+"National_"+part+"_"+currentDate+".accdb")), accessTemplate, 0755)
 		if err != nil {
 			log.Error("Error creating", filepath.Join(parentDir, "result", currentDate, techName, "National", (techName+"_DUMP_HW_"+"National_"+part+"_"+currentDate+".accdb")))
-			return
+			return ""
 		}
 	}
 
@@ -399,7 +439,7 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 
 		}
 	}
-
+	return filepath.Join(parentDir, resultNational)
 }
 
 func main() {
@@ -408,12 +448,15 @@ func main() {
 	flagGetDate := flag.String("date", "", "Get Specific Date in yyyymmdd")
 	flagRawOnly := flag.Bool("raw", false, "Get Raw Only")
 	flagKeepCSV := flag.Bool("keep-csv", false, "Keep Generated CSV for checking")
+	flagCopyToFolder := flag.String("copy-to", "", "Copy National Dump Result to Folder")
 	flag.Parse()
-	techName := *flagTech
+	techName := strings.TrimSpace(strings.ToUpper(*flagTech))
 	skipDoubleSlash := *flagSkippedComment
 	rawOnly := *flagRawOnly
 	getDate := *flagGetDate
 	keepCSV := *flagKeepCSV
+	copyToFolder := *flagCopyToFolder
+
 	if techName == "" {
 		logStd.Fatalf("Technology not defined")
 	}
@@ -442,7 +485,17 @@ func main() {
 		info2g := make(chan string)
 
 		logStd.Println("Starting 2G For", currentDate)
-		dataProcess("2G", currentDate, info2g, skipDoubleSlash, rawOnly, keepCSV)
+		resultNationalFolder := dataProcess("2G", currentDate, info2g, skipDoubleSlash, rawOnly, keepCSV)
+		if copyToFolder != "" {
+			res, err := copyNationalResultToFolder(resultNationalFolder, filepath.Join(copyToFolder, currentDate), "2G")
+			if err != nil {
+				log.Errorf("Cannot Copy To Destination Folder %s", err.Error())
+			}
+			for _, r := range res {
+				log.Infof("Copy result %s", r)
+			}
+
+		}
 		log.Info("Done in: ", time.Since(timeStart))
 	} else {
 		f, err := os.OpenFile(currentDate+"_"+techName+"_LOG.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0666)
@@ -457,7 +510,17 @@ func main() {
 		info3g := make(chan string)
 
 		logStd.Println("Starting 3G For", currentDate)
-		dataProcess("3G", currentDate, info3g, skipDoubleSlash, rawOnly, keepCSV)
+		resultNationalFolder := dataProcess("3G", currentDate, info3g, skipDoubleSlash, rawOnly, keepCSV)
+		if copyToFolder != "" {
+			res, err := copyNationalResultToFolder(resultNationalFolder, filepath.Join(copyToFolder, currentDate), "3G")
+			if err != nil {
+				log.Errorf("Cannot Copy To Destination Folder %s", err.Error())
+			}
+			for _, r := range res {
+				log.Infof("Copy result %s", r)
+			}
+
+		}
 		log.Info("Done in: ", time.Since(timeStart))
 	}
 
