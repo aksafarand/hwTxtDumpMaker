@@ -40,15 +40,15 @@ func copyNationalResultToFolder(src, dest, techName string) ([]string, error) {
 			return nil, err
 		}
 	}
-
-	files := find(src, ".zip")
+	files, err := IOReadDir(src)
 	if err != nil {
 		return nil, err
 	}
 	for _, file := range files {
+		fmt.Println(file)
 		// copy and rename National Dump
 		if strings.Contains(filepath.Base(file), "National") && strings.Contains(file, techName) {
-			srcFile, err := os.Open(file)
+			srcFile, err := os.Open(filepath.Join(src, file))
 			if err != nil {
 				return nil, err
 			}
@@ -956,6 +956,18 @@ func find(root, ext string) []string {
 		return nil
 	})
 	return a
+}
+
+func IOReadDir(root string) ([]string, error) {
+	var files []string
+	fileInfo, err := ioutil.ReadDir(root)
+	if err != nil {
+		return files, err
+	}
+	for _, file := range fileInfo {
+		files = append(files, file.Name())
+	}
+	return files, nil
 }
 
 // https://gosamples.dev/zip-file/
