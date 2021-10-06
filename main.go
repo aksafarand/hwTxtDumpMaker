@@ -207,7 +207,7 @@ func ftpDownload(remoteServer, remoteFolder, remoteUser, remotePass, currentDate
 }
 
 func AppInfo() string {
-	return "Huawei Dump 2G/3G Maker - Kukuh Wikartomo - 2021 | kukuh.wikartomo@huawei.com"
+	return "Huawei Dump 2G/3G Maker - Kukuh Wikartomo - 2021 v2021.10 | kukuh.wikartomo@huawei.com"
 }
 
 func dataProcess(techName string, currentDate string, info chan string, skipDoubleSlash, rawOnly, keepCsv bool) string {
@@ -238,6 +238,15 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 
 	for i := range ftpConfigs {
 		ftpConfigs[i].FillDate(currentDate)
+	}
+
+	mapConfig := make(map[string]string)
+
+	for _, f := range ftpConfigs {
+		ipAddr := strings.Split(f.RemoteServer, ":")
+		fPrefix := f.FilePrefix
+		fullPrefix := fmt.Sprintf("%s%s", fPrefix, ipAddr[0])
+		mapConfig[fullPrefix] = f.FtpName
 	}
 
 	if err := os.MkdirAll("result", 0666); err != nil {
@@ -385,9 +394,9 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 			panic(err)
 		}
 		if strings.Contains(k, "National") {
-			go MainProcess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_DUMP_HW_"+k+"_"+currentDate+".accdb")), false, &wg, nationalMapPart, currentDate)
+			go MainProcess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_DUMP_HW_"+k+"_"+currentDate+".accdb")), false, &wg, nationalMapPart, currentDate, ftpConfigs, mapConfig)
 		} else {
-			go MainProcess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_HW_"+k+"_"+currentDate+".accdb")), false, &wg, nationalMapPart, currentDate)
+			go MainProcess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_HW_"+k+"_"+currentDate+".accdb")), false, &wg, nationalMapPart, currentDate, ftpConfigs, mapConfig)
 		}
 
 	}
@@ -652,17 +661,26 @@ func listAccessLocation(location string) map[string]string {
 	return accessDestination
 }
 
-func MainProcess(sourceDir string, resultDir string, skipDoubleSlash bool, techNeName string, isAccess, keepCSV bool, dbName string, isLogOut bool, wg *sync.WaitGroup, nationalPart map[string][]string, currentDate string) {
+func MainProcess(sourceDir string, resultDir string, skipDoubleSlash bool, techNeName string, isAccess, keepCSV bool, dbName string, isLogOut bool, wg *sync.WaitGroup, nationalPart map[string][]string, currentDate string, ftpConfigs []configs.Config, mapConfig map[string]string) {
 	defer wg.Done()
 	tables := make(map[string]*configs.Table)
 	files, err := ioutil.ReadDir(sourceDir)
 	if err != nil {
 		log.Fatal(err)
 	}
-
+	// var storeNeName string
 	for _, file := range files {
-		// if path.Ext(file.Name()) == ".txt" && strings.Contains(strings.ToLower(file.Name()), techNeName) {
+
 		if path.Ext(file.Name()) == ".txt" {
+			// Split File Name to Value from mapConfig --> CFGMML-RNC1091-10.5.99.18
+			nameSplit := strings.Split(file.Name(), "-")
+			checkName := strings.TrimSpace(fmt.Sprintf("%s-%s-%s", nameSplit[0], nameSplit[1], nameSplit[2]))
+			if _, ok := mapConfig[checkName]; !ok {
+				log.Errorf("Fail to get NeName from Config from file %s", file.Name())
+				return
+			}
+			neName := mapConfig[checkName]
+
 			fullName := filepath.Join(sourceDir, file.Name())
 			log.Infof("Processing: %s", fullName)
 			f, err := os.Open(fullName)
@@ -670,7 +688,8 @@ func MainProcess(sourceDir string, resultDir string, skipDoubleSlash bool, techN
 				log.Errorf("Error Open File: %s", fullName)
 				return
 			}
-			neName := ""
+			// neName := ""
+
 			scanner := bufio.NewScanner(f)
 			it := 1
 			for scanner.Scan() {
@@ -713,13 +732,71 @@ func MainProcess(sourceDir string, resultDir string, skipDoubleSlash bool, techN
 				table := tables[tblName]
 				arrStr[1] = strings.ReplaceAll(arrStr[1], ";", "")
 				keyVals := strings.Split(arrStr[1], ",")
+				isSubKey := false
 				row := make([]string, len(table.Header))
 				for _, kv := range keyVals {
 					keyVal := strings.Split(kv, "=")
 					key := strings.TrimSpace(keyVal[0])
 					val := ""
+
+					// Check if Val is Concatenated Param
+					// HSPAPLUSSWITCH=
+					// 64QAM-1
+					// &MIMO-0
+					// &E_FACH-0
+					// &DTX_DRX-0
+					// &HS_SCCH_LESS_OPERATION-0
+					// &DL_L2ENHANCED-1
+					// &64QAM_MIMO-0
+					// &UL_16QAM-1
+					// &DC_HSDPA-0
+					// &UL_L2ENHANCED-1
+					// &EDPCCH_BOOSTING-0
+					// &DCMIMO_HSDPA-0
+					// &E_DRX-0
+					// &DC_HSUPA-0
+					// &HSDPA_4C_MIMO-0
+					// &HSDPA_4C-0
+					// &DBMIMO_HSDPA-0
+					// &DB_HSDPA-0
+					// &HSDPA_SFDC-0
+					// &HSDPA_DF3C-0
+					// &INTERNBDB_HSDPA-0
+					// &FDPCH_CAPABILITY_INVALID-0,
+
 					if len(keyVal) > 1 {
 						val = keyVal[1]
+
+						// Check if thereis Sub Value with & But Not Col Remark & But Not Col CELLNAME Due to i.e."604360_CL&T_073_3G-1"
+						if strings.Contains(val, "&") && key != "REMARK" && !strings.Contains(key, "CELLNAME") {
+							isSubKey = true
+
+							cKeyVal := strings.Split(val, "&")
+							for _, cV := range cKeyVal {
+								subKeyVal := strings.Split(cV, "-")
+								if len(subKeyVal) > 1 {
+
+									subKey := fmt.Sprintf("%s_%v", key, strings.TrimSpace(subKeyVal[0]))
+									subVal := fmt.Sprintf("%v", subKeyVal[1])
+
+									if idx, ok := table.HeaderMap[subKey]; !ok {
+										table.HeaderMap[subKey] = int64(len(table.Header))
+										table.Header = append(table.Header, subKey)
+
+										row = append(row, subVal)
+
+									} else {
+										row[idx] = subVal
+									}
+
+								}
+
+							}
+
+						} else {
+							isSubKey = false
+						}
+
 						if len(val) > 2 && val[:2] == "H'" {
 							output, err := strconv.ParseInt(hexaNumberToInteger(val[2:]), 16, 64)
 							if err != nil {
@@ -731,43 +808,29 @@ func MainProcess(sourceDir string, resultDir string, skipDoubleSlash bool, techN
 						if len(val) > 2 && val[:2] == "SF" {
 							val = fmt.Sprintf("%q", val)
 						}
+
 					}
 
-					if key == "SYSOBJECTID" {
+					if !isSubKey {
+						if idx, ok := table.HeaderMap[key]; !ok {
+							table.HeaderMap[key] = int64(len(table.Header))
+							table.Header = append(table.Header, key)
 
-						neName = val
-						if len(table.Buffer.String()) > 0 {
-							content := append([]byte(neName+","), table.Buffer.Bytes()...)
-							content = bytes.ReplaceAll(content, []byte("\n,"), []byte("\n"+neName+","))
-							if _, err := table.File.Write(content); err != nil {
-								panic(err)
-							}
-						}
-						table.Buffer.Reset()
-					}
+							row = append(row, val)
 
-					if idx, ok := table.HeaderMap[key]; !ok {
-						table.HeaderMap[key] = int64(len(table.Header))
-						table.Header = append(table.Header, key)
-						row = append(row, val)
-
-					} else {
-						row[idx] = val
-					}
-
-					if neName == "" {
-						for _, r := range row {
-							table.Buffer.WriteString(r)
+						} else {
+							row[idx] = val
 						}
 					}
+
 				}
 
-				if neName != "" {
-					content := append([]byte(neName), []byte(strings.Join(row, ",")+"\n")...)
-					if _, err := table.File.Write(content); err != nil {
-						panic(err)
-					}
+				content := append([]byte(neName), []byte(strings.Join(row, ",")+"\n")...)
+
+				if _, err := table.File.Write(content); err != nil {
+					panic(err)
 				}
+
 			}
 
 		}

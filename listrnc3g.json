@@ -1,22 +1,12 @@
 [
   {
-    "ftpname": "Huawei_Kudus",
-    "servername": "10.7.245.34:21",
+    "ftpname": "Huawei_Cirebon_2",
+    "servername": "10.7.244.242:21",
     "remotefolder": "/bam/version_b/ftp/export_cfgmml/",
     "remoteuser": "hw_sudi",
     "remotepass": "Huaweih3i2021?",
-    "fileprefix": "CFGMML-RNC1198-",
-    "Region": "Central Java",
+    "fileprefix": "CFGMML-RNC1095-",
+    "Region": "West Java",
     "Part": "1"
-  },
-  {
-    "ftpname": "Huawei_Kudus",
-    "servername": "10.7.245.34:21",
-    "remotefolder": "/bam/version_b/ftp/export_cfgmml/",
-    "remoteuser": "hw_sudi",
-    "remotepass": "Huaweih3i2021?",
-    "fileprefix": "CFGMML-RNC1198-",
-    "Region": "Central Java",
-    "Part": "2"
-  } 
+  }
 ]
