@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
+	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"io/fs"
 	"io/ioutil"
 	logStd "log"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -31,6 +33,7 @@ import (
 )
 
 var downloadFailed int
+var allTables map[string]*configs.Table
 
 func copyNationalResultToFolder(src, dest, techName string) ([]string, error) {
 	var resultCopy []string
@@ -207,7 +210,7 @@ func ftpDownload(remoteServer, remoteFolder, remoteUser, remotePass, currentDate
 }
 
 func AppInfo() string {
-	return "Huawei Dump 2G/3G Maker - Kukuh Wikartomo - 2021 v2021.10 | kukuh.wikartomo@huawei.com"
+	return "Huawei Dump 2G/3G Maker - Kukuh Wikartomo - 2021 v2021.12 | kukuh.wikartomo@huawei.com"
 }
 
 func dataProcess(techName string, currentDate string, info chan string, skipDoubleSlash, rawOnly, keepCsv bool) string {
@@ -387,6 +390,11 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 	t = listAccessLocation(filepath.Join("result", currentDate, techName))
 
 	var wg sync.WaitGroup
+	// var part int
+	// if len(nationalMapPart) > 0 {
+	// 	part = len(nationalMapPart) - 1
+	// }
+	// fmt.Println("part:", part, t)
 	wg.Add(len(t))
 
 	for k, v := range t {
@@ -394,15 +402,46 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 			panic(err)
 		}
 		if strings.Contains(k, "National") {
+
 			go MainProcess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_DUMP_HW_"+k+"_"+currentDate+".accdb")), false, &wg, nationalMapPart, currentDate, ftpConfigs, mapConfig)
 		} else {
+
 			go MainProcess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_HW_"+k+"_"+currentDate+".accdb")), false, &wg, nationalMapPart, currentDate, ftpConfigs, mapConfig)
 		}
 
 	}
 
 	wg.Wait()
-	for _, v := range t {
+	logStd.Println("Parsing Raw Data Done")
+	// Access Export
+
+	var wg2 sync.WaitGroup
+	wg2.Add(len(t))
+	for k, v := range t {
+
+		if strings.Contains(k, "National") {
+
+			GoAccess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_DUMP_HW_"+k+"_"+currentDate+".accdb")), false, nationalMapPart, currentDate, ftpConfigs, mapConfig, &wg2)
+		} else {
+
+			GoAccess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_HW_"+k+"_"+currentDate+".accdb")), false, nationalMapPart, currentDate, ftpConfigs, mapConfig, &wg2)
+		}
+
+	}
+
+	wg2.Wait()
+	logStd.Println("Creating Access Done")
+	// for k, v := range t {
+	// 	if err := os.MkdirAll(filepath.Join("result", currentDate, techName, k, "_dumpresult"), 0666); err != nil {
+	// 		panic(err)
+	// 	}
+	// 	if strings.Contains(k, "National") {
+	// 		MainProcess(v, filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"), skipDoubleSlash, fileName, true, keepCsv, filepath.Join(parentDir, "result", currentDate, techName, k, (techName+"_DUMP_HW_"+k+"_"+currentDate+".accdb")), false, &wg, nationalMapPart, currentDate, ftpConfigs, mapConfig)
+	// 	}
+
+	// }
+
+	for k, v := range t {
 		for _, s := range find(v, ".txt") {
 			if nationalSplit && strings.Contains(filepath.Base(v), "National") {
 				if !keepCsv {
@@ -418,6 +457,16 @@ func dataProcess(techName string, currentDate string, info chan string, skipDoub
 				}
 			}
 		}
+		if !keepCsv {
+			if err := os.RemoveAll(filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult")); err != nil {
+				log.Errorf("Error Delete Temp Dir: %s", filepath.Join(parentDir, "result", currentDate, techName, k, "_dumpresult"))
+
+			}
+		}
+	}
+
+	if !keepCsv {
+		logStd.Println("Removing Temp Files Done")
 	}
 
 	for _, v := range t {
@@ -826,7 +875,6 @@ func MainProcess(sourceDir string, resultDir string, skipDoubleSlash bool, techN
 				}
 
 				content := append([]byte(neName), []byte(strings.Join(row, ",")+"\n")...)
-
 				if _, err := table.File.Write(content); err != nil {
 					panic(err)
 				}
@@ -837,7 +885,7 @@ func MainProcess(sourceDir string, resultDir string, skipDoubleSlash bool, techN
 
 	}
 	for _, table := range tables {
-		table.File.Close()
+		defer table.File.Close()
 		content, err := os.ReadFile(table.Fpath)
 		if err != nil {
 			log.Errorf("Error Reading File: %s", table.Fpath)
@@ -852,37 +900,94 @@ func MainProcess(sourceDir string, resultDir string, skipDoubleSlash bool, techN
 			log.Errorf("Error Writing File: %s", table.Fpath)
 			return
 		}
+
 	}
 
-	dbName2 := filepath.Base(dbName)[:len(filepath.Base(dbName))-len(filepath.Ext(filepath.Base(dbName)))-len(currentDate)]
+	// TODO: UNTIL THIS PART --> CSV ALREADY COMBINED --> LOOP TABLESS
+	for _, table := range tables {
 
-	// access region
-	if isAccess && !strings.Contains(dbName2, "National") {
-		logStd.Printf("Populating: %s\n", dbName)
-		ExportAccess(tables, dbName, resultDir, isLogOut, nil)
-	}
+		if len(table.Header) > 255 {
+			f, err := os.Open(table.Fpath)
+			if err != nil {
+				log.Errorf("Error Opening File: %s", table.Fpath)
+				return
+			}
 
-	// access national all
-	if isAccess && strings.Contains(dbName2, "National") && len(nationalPart) == 0 {
-		logStd.Printf("Populating: %s\n", dbName)
-		ExportAccess(tables, dbName, resultDir, isLogOut, nil)
-	}
+			defer f.Close()
+			csvReader := csv.NewReader(f)
+			csvReader.FieldsPerRecord = -1
+			csvReader.LazyQuotes = true
+			line, err := csvReader.ReadAll()
+			if err != nil {
+				log.Errorf("Error ReadAll File: %s || %s", err.Error(), f.Name())
+			}
 
-	// access national part
-	if isAccess && strings.Contains(dbName2, "National") && len(nationalPart) != 0 {
-		for part, listNe := range nationalPart {
-			dbNamePart := filepath.Join(filepath.Dir(dbName), dbName2+part+"_"+currentDate+".accdb")
-			logStd.Printf("Populating: %s\n", dbNamePart)
-			ExportAccess(tables, dbNamePart, resultDir, isLogOut, listNe)
+			noSplitFile := int(math.Ceil(float64(len(table.Header)) / 255))
+			for n := 1; n <= noSplitFile; n++ {
+				table.ListFile = append(table.ListFile, fmt.Sprintf("%s_%v.csv", table.Name, n))
+				table.TableName = append(table.TableName, fmt.Sprintf("%s %v", table.Name, n))
+			}
+
+			dir := filepath.Dir(table.Fpath)
+
+			minC := 1
+			maxC := 254
+			// TEMPORARY --> UNTIL NOW ONLY THIS MEAS GROUP FOR CELL LEVEL -> GET NE NAME AND CELLID FOR EACH SPLIT
+			if strings.Contains(table.Name, "UCELLCOALGOENHPARA") {
+				minC = 2
+			}
+			for i, nf := range table.ListFile {
+				csvFile, err := os.Create(filepath.Join(dir, nf))
+				if err != nil {
+					log.Fatalf("failed creating file: %s", err)
+				}
+				defer csvFile.Close()
+
+				csvwriter := csv.NewWriter(csvFile)
+				defer csvwriter.Flush()
+				var data [][]string
+				if i == len(table.ListFile)-1 {
+
+					for _, r := range line {
+						// TEMPORARY --> UNTIL NOW ONLY THIS MEAS GROUP FOR CELL LEVEL -> GET NE NAME AND CELLID FOR EACH SPLIT
+						if strings.Contains(table.Name, "UCELLCOALGOENHPARA") {
+							row := append([]string{r[0], r[1]}, r[minC:]...)
+							data = append(data, row)
+						} else {
+							row := append([]string{r[0]}, r[minC:]...)
+							data = append(data, row)
+						}
+					}
+				} else {
+					for _, r := range line {
+
+						if (len(r)) < maxC {
+							maxC = len(r)
+						}
+						if strings.Contains(table.Name, "UCELLCOALGOENHPARA") {
+							row := append([]string{r[0], r[1]}, r[minC:maxC]...)
+							data = append(data, row)
+						} else {
+							row := append([]string{r[0]}, r[minC:maxC]...)
+							data = append(data, row)
+						}
+					}
+				}
+
+				csvwriter.WriteAll(data)
+
+				minC = maxC
+				maxC = maxC + 254
+			}
+
+		} else {
+			table.ListFile = append(table.ListFile, fmt.Sprintf("%s.csv", table.Name))
+			table.TableName = append(table.TableName, table.Name)
 		}
 	}
 
-	if !keepCSV {
-		if err := os.RemoveAll(resultDir); err != nil {
-			log.Errorf("Error Delete Temp Dir: %s", resultDir)
-			return
-		}
-	}
+	allTables = tables
+
 }
 
 func MakeNewTable(name string, resultDir string) (*configs.Table, error) {
@@ -905,6 +1010,7 @@ func MakeNewTable(name string, resultDir string) (*configs.Table, error) {
 }
 
 func ExportAccess(tables map[string]*configs.Table, dbName string, resultDir string, isLogOut bool, listNE []string) {
+	// fmt.Println(tables)
 
 	pvd := fmt.Sprintf(`DRIVER=Microsoft Access Driver (*.mdb, *.accdb);UID=admin;DBQ=%s;`, dbName)
 	db, err := sqlx.Open("odbc", pvd)
@@ -914,95 +1020,108 @@ func ExportAccess(tables map[string]*configs.Table, dbName string, resultDir str
 	}
 	log.Infof("Processing Access File: %s", dbName)
 	defer db.Close()
-	if listNE != nil {
+	if listNE != nil { // for national
 		for _, table := range tables {
-			qry := fmt.Sprintf(`SELECT file.* INTO [%s] FROM [Text;FMT=Delimited(,);HDR=YES;DATABASE=%s].[%s] as file where file.[NE NAME] IN (%s)`, table.Name, resultDir, table.Name+`.csv`, "'"+strings.Join(listNE, "', '")+"'")
-			if isLogOut {
-				log.Info(qry)
-			}
-			tx, err := db.Exec(qry)
-			if err != nil && isLogOut {
-				log.Warnf("Error Inserting %s Retry With Text Data Type", table.Name)
-				createTableCol := []string{}
+			checkSplit := len(table.ListFile)
 
-				for _, s := range table.Header {
-					createTableCol = append(createTableCol, fmt.Sprintf(`[%s] longtext`, s))
-				}
+			for t := 0; t < checkSplit; t++ {
+				qry := fmt.Sprintf(`SELECT file.* INTO [%s] FROM [Text;FMT=Delimited(,);HDR=YES;DATABASE=%s].[%s] as file where file.[NE NAME] IN (%s)`, table.TableName[t], resultDir, table.ListFile[t], "'"+strings.Join(listNE, "', '")+"'")
 
-				newQry := fmt.Sprintf(`CREATE TABLE [%s] (%s)`, table.Name, strings.Join(createTableCol, ","))
-				_, _ = db.Exec(newQry)
 				if isLogOut {
 					log.Info(qry)
 				}
+				tx, err := db.Exec(qry)
 				if err != nil && isLogOut {
-					log.Warnf("Error Creating Table %s Maybe Already Exists, Trying to Insert Values", table.Name)
-				}
-				qry := fmt.Sprintf(`INSERT INTO [%s] SELECT * FROM [Text;FMT=Delimited(,);HDR=YES;DATABASE=%s].[%s] as file WHERE file.[NE NAME] IN (%s)`, table.Name, resultDir, table.Name+`.csv`, "'"+strings.Join(listNE, "', '")+"'")
-				tx, err = db.Exec(qry)
-				if isLogOut {
-					log.Info(qry)
-				}
-				if err != nil && isLogOut {
-					log.Errorf("Error Inserting %s - Skipping", table.Name)
+					log.Warnf("Error Inserting %s Retry With Text Data Type", table.TableName[t])
+					createTableCol := []string{}
+
+					for _, s := range table.Header {
+						createTableCol = append(createTableCol, fmt.Sprintf(`[%s] longtext`, s))
+					}
+
+					newQry := fmt.Sprintf(`CREATE TABLE [%s] (%s)`, table.TableName[t], strings.Join(createTableCol, ","))
+					_, _ = db.Exec(newQry)
+					if isLogOut {
+						log.Info(qry)
+					}
+					if err != nil && isLogOut {
+						log.Warnf("Error Creating Table %s Maybe Already Exists, Trying to Insert Values", table.TableName[t])
+					}
+					qry := fmt.Sprintf(`INSERT INTO [%s] SELECT * FROM [Text;FMT=Delimited(,);HDR=YES;DATABASE=%s].[%s] as file WHERE file.[NE NAME] IN (%s)`, table.TableName[t], resultDir, table.ListFile[t], "'"+strings.Join(listNE, "', '")+"'")
+					tx, err = db.Exec(qry)
+					if isLogOut {
+						log.Info(qry)
+					}
+					if err != nil && isLogOut {
+						log.Errorf("Error Inserting %s - Skipping", table.TableName[t])
+						continue
+					}
+					if isLogOut {
+						rowsInserted, _ := tx.RowsAffected()
+						log.Infof(`Inserted %s row(s) to [%s]`, strconv.FormatInt(rowsInserted, 10), table.TableName[t])
+					}
+
 					continue
+
 				}
 				if isLogOut {
 					rowsInserted, _ := tx.RowsAffected()
-					log.Infof(`Inserted %s row(s) to [%s]`, strconv.FormatInt(rowsInserted, 10), table.Name)
+					log.Infof(`Inserted %s row(s) to [%s]`, strconv.FormatInt(rowsInserted, 10), table.TableName[t])
 				}
-
-				continue
-
 			}
-			if isLogOut {
-				rowsInserted, _ := tx.RowsAffected()
-				log.Infof(`Inserted %s row(s) to [%s]`, strconv.FormatInt(rowsInserted, 10), table.Name)
-			}
+
 		}
-	} else {
+	} else { // For Region
 		for _, table := range tables {
-			qry := fmt.Sprintf(`SELECT file.* INTO [%s] FROM [Text;FMT=Delimited(,);HDR=YES;DATABASE=%s].[%s] as file`, table.Name, resultDir, table.Name+`.csv`)
-			if isLogOut {
-				log.Info(qry)
-			}
-			tx, err := db.Exec(qry)
-			if err != nil && isLogOut {
-				log.Warnf("Error Inserting %s Retry With Text Data Type", table.Name)
-				createTableCol := []string{}
+			checkSplit := len(table.ListFile)
 
-				for _, s := range table.Header {
-					createTableCol = append(createTableCol, fmt.Sprintf(`[%s] longtext`, s))
-				}
+			for t := 0; t < checkSplit; t++ {
 
-				newQry := fmt.Sprintf(`CREATE TABLE [%s] (%s)`, table.Name, strings.Join(createTableCol, ","))
-				_, _ = db.Exec(newQry)
+				qry := fmt.Sprintf(`SELECT file.* INTO [%s] FROM [Text;FMT=Delimited(,);HDR=YES;DATABASE=%s].[%s] as file`, table.TableName[t], resultDir, table.ListFile[t])
+
 				if isLogOut {
 					log.Info(qry)
 				}
+				tx, err := db.Exec(qry)
 				if err != nil && isLogOut {
-					log.Warnf("Error Creating Table %s Maybe Already Exists, Trying to Insert Values", table.Name)
-				}
-				qry := fmt.Sprintf(`INSERT INTO [%s] SELECT * FROM [Text;FMT=Delimited(,);HDR=YES;DATABASE=%s].[%s] as file`, table.Name, resultDir, table.Name+`.csv`)
-				tx, err = db.Exec(qry)
-				if isLogOut {
-					log.Info(qry)
-				}
-				if err != nil && isLogOut {
-					log.Errorf("Error Inserting %s - Skipping", table.Name)
+					log.Warnf("Error Inserting %s Retry With Text Data Type - %s", table.TableName[t], err.Error())
+					createTableCol := []string{}
+
+					for _, s := range table.Header {
+						createTableCol = append(createTableCol, fmt.Sprintf(`[%s] longtext`, s))
+					}
+
+					newQry := fmt.Sprintf(`CREATE TABLE [%s] (%s)`, table.TableName[t], strings.Join(createTableCol, ","))
+					_, _ = db.Exec(newQry)
+					if isLogOut {
+						log.Info(qry)
+					}
+					if err != nil && isLogOut {
+						log.Warnf("Error Creating Table %s Maybe Already Exists, Trying to Insert Values", table.TableName[t])
+					}
+					qry := fmt.Sprintf(`INSERT INTO [%s] SELECT * FROM [Text;FMT=Delimited(,);HDR=YES;DATABASE=%s].[%s] as file`, table.TableName[t], resultDir, table.ListFile[t])
+					tx, err = db.Exec(qry)
+					if isLogOut {
+						log.Info(qry)
+					}
+					if err != nil && isLogOut {
+						log.Errorf("Error Inserting %s - Skipping", table.TableName[t])
+						continue
+					}
+					if isLogOut {
+						rowsInserted, _ := tx.RowsAffected()
+						log.Infof(`Inserted %s row(s) to [%s]`, strconv.FormatInt(rowsInserted, 10), table.TableName[t])
+					}
+
 					continue
+
 				}
 				if isLogOut {
 					rowsInserted, _ := tx.RowsAffected()
-					log.Infof(`Inserted %s row(s) to [%s]`, strconv.FormatInt(rowsInserted, 10), table.Name)
+					log.Infof(`Inserted %s row(s) to [%s]`, strconv.FormatInt(rowsInserted, 10), table.TableName[t])
 				}
-
-				continue
-
 			}
-			if isLogOut {
-				rowsInserted, _ := tx.RowsAffected()
-				log.Infof(`Inserted %s row(s) to [%s]`, strconv.FormatInt(rowsInserted, 10), table.Name)
-			}
+
 		}
 	}
 }
@@ -1095,4 +1214,32 @@ func hexaNumberToInteger(hexaString string) string {
 	numberStr := strings.Replace(hexaString, "0x", "", -1)
 	numberStr = strings.Replace(numberStr, "0X", "", -1)
 	return numberStr
+}
+
+func GoAccess(sourceDir string, resultDir string, skipDoubleSlash bool, techNeName string, isAccess, keepCSV bool, dbName string, isLogOut bool, nationalPart map[string][]string, currentDate string, ftpConfigs []configs.Config, mapConfig map[string]string, wg2 *sync.WaitGroup) {
+	defer wg2.Done()
+	dbName2 := filepath.Base(dbName)[:len(filepath.Base(dbName))-len(filepath.Ext(filepath.Base(dbName)))-len(currentDate)]
+
+	// access region
+	if isAccess && !strings.Contains(dbName2, "National") {
+		logStd.Printf("Populating: %s\n", dbName)
+		ExportAccess(allTables, dbName, resultDir, false, nil)
+	}
+
+	// access national all
+	if isAccess && strings.Contains(dbName2, "National") && len(nationalPart) == 0 {
+		logStd.Printf("Populating: %s\n", dbName)
+		ExportAccess(allTables, dbName, resultDir, isLogOut, nil)
+	}
+
+	// access national part
+	if isAccess && strings.Contains(dbName2, "National") && len(nationalPart) != 0 {
+		for part, listNe := range nationalPart {
+			dbNamePart := filepath.Join(filepath.Dir(dbName), dbName2+part+"_"+currentDate+".accdb")
+			logStd.Printf("Populating: %s\n", dbNamePart)
+
+			ExportAccess(allTables, dbNamePart, resultDir, isLogOut, listNe)
+		}
+	}
+
 }

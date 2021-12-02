@@ -31,4 +31,6 @@ type Table struct {
 	HeaderMap map[string]int64
 	File      io.WriteCloser
 	Buffer    *bytes.Buffer
+	ListFile  []string
+	TableName []string
 }
